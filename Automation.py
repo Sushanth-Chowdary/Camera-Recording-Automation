@@ -9,8 +9,8 @@ from requests.auth import HTTPBasicAuth
 # CONFIGURATION 
 # ==========================================
 CAMERA_IP = "10.34.0.16"
-USERNAME = "admin"
-PASSWORD = "admin"
+USERNAME = "your_username"
+PASSWORD = "your_password"
 
 # The EXACT PTZ control URL we found in your network logs!
 PTZ_API_URL = f"http://{CAMERA_IP}/cgi-bin/ptzctrl.cgi"
