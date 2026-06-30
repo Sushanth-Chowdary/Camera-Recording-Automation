@@ -3,6 +3,7 @@ import requests
 import subprocess
 import time
 import datetime
+import threading
 from requests.auth import HTTPBasicAuth
 
 # ==========================================
@@ -12,96 +13,89 @@ USERNAME = "admin"
 PASSWORD = "admin"
 BASE_OUTPUT_DIR = "Recording"
 
-# Define our two cameras and their specific sub-folders
-CAMERAS = [
-    {"ip": "10.34.0.16", "folder": "Camera_1"},
-    {"ip": "10.34.0.17", "folder": "Camera_2"}
-]
+# Define the preset lists for each camera
+CAM1_PRESETS = [1, 2, 3, 4, 5, 6, 7, 8]  # Left Corner (10.34.0.17)
+CAM2_PRESETS = [1, 2, 3, 4, 5, 6]        # Center (10.34.0.16)
 
-# Create the main Recording folder and the sub-folders for each camera
-for cam in CAMERAS:
-    folder_path = os.path.join(BASE_OUTPUT_DIR, cam["folder"])
-    os.makedirs(folder_path, exist_ok=True) 
+# Create output folders
+os.makedirs(os.path.join(BASE_OUTPUT_DIR, "Camera_1"), exist_ok=True)
+os.makedirs(os.path.join(BASE_OUTPUT_DIR, "Camera_2"), exist_ok=True)
 
 # ==========================================
 
-def call_preset_for_all(preset_number):
-    """Sends a command to ALL cameras to move to a specific preset simultaneously."""
-    print(f"\n[*] Moving all cameras to Preset {preset_number}...")
-    
-    for cam in CAMERAS:
-        ip = cam["ip"]
-        target_url = f"http://{ip}/cgi-bin/ptzctrl.cgi?ptzcmd&poscall&{preset_number}"
-        
-        try:
-            response = requests.get(target_url, auth=HTTPBasicAuth(USERNAME, PASSWORD), timeout=5)
-            if response.status_code == 200:
-                print(f"    [+] {ip}: Successfully triggered.")
-            else:
-                print(f"    [-] {ip}: Failed. Status {response.status_code}")
-        except Exception as e:
-            print(f"    [-] {ip}: Error connecting - {e}")
+def call_preset(ip, preset_number):
+    """Sends the movement command to a specific camera."""
+    url = f"http://{ip}/cgi-bin/ptzctrl.cgi?ptzcmd&poscall&{preset_number}"
+    try:
+        response = requests.get(url, auth=HTTPBasicAuth(USERNAME, PASSWORD), timeout=5)
+        if response.status_code != 200:
+            print(f"    [-] {ip}: Failed to trigger preset {preset_number}. Status {response.status_code}")
+    except Exception as e:
+        print(f"    [-] {ip}: Error connecting - {e}")
 
-def record_all_streams(duration_seconds, preset_name):
-    """Starts FFmpeg for all cameras simultaneously and waits for them to finish."""
+def record_stream(ip, folder, duration_seconds, preset_number):
+    """Captures the RTSP stream for a specific camera."""
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    rtsp_url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}:554/stream1"
+    filename = f"Preset{preset_number}_{timestamp}.mp4"
+    output_filepath = os.path.join(BASE_OUTPUT_DIR, folder, filename)
     
-    print(f"[*] Starting {duration_seconds}-second recording for all cameras...")
+    command = [
+        'ffmpeg',
+        '-y',
+        '-rtsp_transport', 'tcp',
+        '-i', rtsp_url,
+        '-t', str(duration_seconds),
+        '-c', 'copy',
+        output_filepath
+    ]
     
-    active_processes = []
-    
-    # Loop through each camera and start an FFmpeg process in the background
-    for cam in CAMERAS:
-        ip = cam["ip"]
-        folder = cam["folder"]
-        
-        rtsp_url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}:554/stream1"
-        filename = f"Classroom_{preset_name}_{timestamp}.mp4"
-        output_filepath = os.path.join(BASE_OUTPUT_DIR, folder, filename)
-        
-        command = [
-            'ffmpeg',
-            '-y',                        
-            '-rtsp_transport', 'tcp',    
-            '-i', rtsp_url,              
-            '-t', str(duration_seconds), 
-            '-c', 'copy',                
-            output_filepath              
-        ]
-        
-        try:
-            # Popen starts the process in the background and continues the loop
-            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            active_processes.append((process, output_filepath))
-            print(f"    [+] Recording started for {ip} -> {output_filepath}")
-        except Exception as e:
-            print(f"    [-] Failed to start FFmpeg for {ip}: {e}")
+    try:
+        # We use subprocess.run here because the thread itself is running in the background.
+        # This will pause the specific camera's thread until its recording is done.
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"[+] {ip} finished Preset {preset_number} -> {filename}")
+    except Exception as e:
+        print(f"[-] {ip} failed to record Preset {preset_number}: {e}")
 
-    # Now that all recordings are running simultaneously, we tell Python to wait 
-    # until they are all completely finished before moving on.
-    for process, filepath in active_processes:
-        process.wait()
-        
-    print("[+] All simultaneous recordings have finished saving.")
+# ==========================================
+# WORKER THREAD FUNCTIONS
+# ==========================================
+
+def run_camera_1():
+    """Independent loop for Camera 1 (Left Corner) - 8 Cycles, 32s records."""
+    ip = "10.34.0.17"
+    for preset in CAM1_PRESETS:
+        print(f"[*] Camera 1 moving to Preset {preset}...")
+        call_preset(ip, preset)
+        time.sleep(5) # Wait for movement/focus
+        record_stream(ip, "Camera_1", duration_seconds=32, preset_number=preset)
+
+def run_camera_2():
+    """Independent loop for Camera 2 (Center) - 6 Cycles, 45s records."""
+    ip = "10.34.0.16"
+    for preset in CAM2_PRESETS:
+        print(f"[*] Camera 2 moving to Preset {preset}...")
+        call_preset(ip, preset)
+        time.sleep(5) # Wait for movement/focus
+        record_stream(ip, "Camera_2", duration_seconds=45, preset_number=preset)
 
 # ==========================================
 # MAIN EXECUTION ROUTINE
 # ==========================================
 if __name__ == "__main__":
-    print("Starting Multi-Camera Automation Script...")
+    print("Starting Independent 5-Minute Camera Sweeps...\n")
     
-    # --- TASK 1: Record Preset 1 ---
-    call_preset_for_all(1)
-    print("Waiting 5 seconds for cameras to pan and focus...")
-    time.sleep(5) 
-    record_all_streams(duration_seconds=30, preset_name="Preset1_Whiteboard")
+    # Define our two independent threads
+    thread_cam1 = threading.Thread(target=run_camera_1)
+    thread_cam2 = threading.Thread(target=run_camera_2)
     
-    print("\n----------------------------------------")
+    # Start both threads at the exact same time
+    thread_cam1.start()
+    thread_cam2.start()
     
-    # --- TASK 2: Record Preset 2 ---
-    call_preset_for_all(2)
-    print("Waiting 5 seconds for cameras to pan and focus...")
-    time.sleep(5)
-    record_all_streams(duration_seconds=30, preset_name="Preset2_Desks")
+    # Tell the main script to wait until BOTH threads finish before exiting
+    thread_cam1.join()
+    thread_cam2.join()
     
-    print("\nAutomation complete.")
+    print("\n[+] 5-Minute Automation Complete. All cameras finished their independent sweeps.")
