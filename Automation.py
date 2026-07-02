@@ -16,10 +16,20 @@ BASE_OUTPUT_DIR = "Recording"
 CAM1_PRESETS = [1, 2, 3, 4, 5, 6, 7, 8]  # Left Corner (10.34.0.17)
 CAM2_PRESETS = [1, 2, 3, 4, 5, 6]        # Center (10.34.0.16)
 
+# 1 = 5 minutes
+# 2 = 15 minutes
+# 3 = 45 minutes
+SELECTED_PROTOCOL = 1 
+
+PROTOCOLS = {
+    1: {"name": "5-Minute", "cam1": 32, "cam2": 45},
+    2: {"name": "15-Minute", "cam1": 107, "cam2": 145},
+    3: {"name": "45-Minute", "cam1": 332, "cam2": 445}
+}
+
 os.makedirs(os.path.join(BASE_OUTPUT_DIR, "Camera_1"), exist_ok=True)
 os.makedirs(os.path.join(BASE_OUTPUT_DIR, "Camera_2"), exist_ok=True)
 
-# Lists to track ONLY the files generated during THIS specific run
 cam1_current_files = []
 cam2_current_files = []
 
@@ -57,7 +67,6 @@ def record_stream(ip, folder, duration_seconds, preset_number, tracker_list):
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"[+] {ip} finished Preset {preset_number} -> {filename}")
         
-        # Add ONLY this newly created file to our tracker list
         tracker_list.append(filename)
         
     except Exception as e:
@@ -67,21 +76,21 @@ def record_stream(ip, folder, duration_seconds, preset_number, tracker_list):
 # THREADS
 # ==========================================
 
-def run_camera_1():
+def run_camera_1(duration):
     ip = "10.34.0.17"
     for preset in CAM1_PRESETS:
-        print(f"[*] Camera 1 moving to Preset {preset}...")
+        print(f"[*] Camera 1 moving to Preset {preset} (Recording for {duration}s)...")
         call_preset(ip, preset)
         time.sleep(5) 
-        record_stream(ip, "Camera_1", duration_seconds=32, preset_number=preset, tracker_list=cam1_current_files)
+        record_stream(ip, "Camera_1", duration_seconds=duration, preset_number=preset, tracker_list=cam1_current_files)
 
-def run_camera_2():
+def run_camera_2(duration):
     ip = "10.34.0.16"
     for preset in CAM2_PRESETS:
-        print(f"[*] Camera 2 moving to Preset {preset}...")
+        print(f"[*] Camera 2 moving to Preset {preset} (Recording for {duration}s)...")
         call_preset(ip, preset)
         time.sleep(5) 
-        record_stream(ip, "Camera_2", duration_seconds=45, preset_number=preset, tracker_list=cam2_current_files)
+        record_stream(ip, "Camera_2", duration_seconds=duration, preset_number=preset, tracker_list=cam2_current_files)
 
 # ==========================================
 # VIDEO MERGER
@@ -96,7 +105,6 @@ def merge_videos(folder_name, output_filename, file_list):
     print(f"\n[*] Merging {len(file_list)} new clips for {folder_name}...")
     folder_path = os.path.join(BASE_OUTPUT_DIR, folder_name)
     
-    # Sort the list just to be absolutely certain they are chronological
     file_list.sort()
     
     list_file_path = os.path.join(folder_path, "concat_list.txt")
@@ -129,10 +137,15 @@ def merge_videos(folder_name, output_filename, file_list):
 # MAIN EXECUTION ROUTINE
 # ==========================================
 if __name__ == "__main__":
-    print("Starting Independent 5-Minute Camera Sweeps...\n")
+    if SELECTED_PROTOCOL not in PROTOCOLS:
+        print(f"[-] Invalid protocol selected: {SELECTED_PROTOCOL}. Please choose 1, 2, or 3.")
+        exit(1)
+
+    protocol_info = PROTOCOLS[SELECTED_PROTOCOL]
+    print(f"Starting Independent {protocol_info['name']} Camera Sweeps (Protocol {SELECTED_PROTOCOL})...\n")
     
-    thread_cam1 = threading.Thread(target=run_camera_1)
-    thread_cam2 = threading.Thread(target=run_camera_2)
+    thread_cam1 = threading.Thread(target=run_camera_1, args=(protocol_info['cam1'],))
+    thread_cam2 = threading.Thread(target=run_camera_2, args=(protocol_info['cam2'],))
     
     thread_cam1.start()
     thread_cam2.start()
@@ -143,8 +156,7 @@ if __name__ == "__main__":
     print("\n[+] Sweeps complete. Beginning video merge process...")
     
     master_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-    
-    # Pass the specific tracking lists to the merger
+    r
     merge_videos("Camera_1", f"Camera_1_MasterSweep_{master_timestamp}.mp4", cam1_current_files)
     merge_videos("Camera_2", f"Camera_2_MasterSweep_{master_timestamp}.mp4", cam2_current_files)
     
